@@ -121,7 +121,7 @@ fork_rc()
 	int pid;
 	if ((pid = fork()) == 0) {
 		sigprocmask(SIG_UNBLOCK, &bmask, NULL);
-		execl("/home/frey/bin/rc", "rc", NULL);
+		execl("/etc/rc", "rc", NULL);
 	}
 	return pid;
 }
