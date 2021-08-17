@@ -17,12 +17,16 @@
  *                         print a warning.) Then switch to SINGLEUSER state.
  */
 
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 
 #include <err.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -36,13 +40,14 @@ enum states {
 
 int  fork_rc();
 int  fork_shell();
-int wait_for_upto(int);
-void swap_state(int *, enum states *);
+int  wait_for_upto(int);
+void sleep_err(int, char *, ...);
 void start_timer();
+void swap_state(int *, enum states *);
 
-const struct timespec half_sec = {
-	0,
-	500000000
+const struct timespec one_sec = {
+	1,
+	0
 };
 
 /* signal block mask -- full */
@@ -51,6 +56,7 @@ sigset_t bmask;
 int
 main(int argc, char *argv[])
 {
+	int cons_fd;
 	int sig;
 	int status;
 	pid_t cpid;
@@ -61,15 +67,38 @@ main(int argc, char *argv[])
 	if (getuid() != 0)
 		return 1;
 
+	/*
+	 * Call setsid().
+	 * Make /dev/console our ctty.
+	 * Make sure STD{IN,OUT,ERR} use it.
+	 */
+
+	setsid();
+
+	cons_fd = open("/dev/console", O_RDWR);
+	if (cons_fd == -1)
+		sleep_err(1, "open /dev/console failed");
+	if (ioctl(cons_fd, TIOCSCTTY) == -1)
+		sleep_err(1, "ioctl to make /dev/console my ctty failed");
+
+	dup2(cons_fd, 0);
+	dup2(cons_fd, 1);
+	dup2(cons_fd, 2);
+
+	close(cons_fd);
+
+
 	sigfillset(&bmask);
 	sigprocmask(SIG_BLOCK, &bmask, NULL);
 
+	/* Set initial state. */
 	state = SINGLEUSER;
 	if (argc == 2 && (strncmp(argv[1], "-s", 2)) == 0) {
 		debug("got -s\n");
 		state = MULTIUSER;
 	}
 	swap_state(&cpid, &state);
+
 
 	start_timer();
 
@@ -101,9 +130,9 @@ main(int argc, char *argv[])
 			kill(-1, SIGHUP);
 			kill(-1, SIGCONT);
 
-			if (wait_for_upto(20) != 0) {
+			if (wait_for_upto(10) != 0) {
 				kill(-1, SIGKILL);
-				if (wait_for_upto(10) != 0) {
+				if (wait_for_upto(5) != 0) {
 					warnx("some processes would not die; "
 					      "ps axl advised");
 				}
@@ -138,12 +167,12 @@ fork_shell()
 }
 
 int
-wait_for_upto(int halfsecs)
+wait_for_upto(int secs)
 {
 	int pid;
 	int status;
 
-	for (int i=0; i<halfsecs; i++) {
+	for (int i=0; i<secs; i++) {
 		while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
 			;
 
@@ -152,25 +181,30 @@ wait_for_upto(int halfsecs)
 			return 0;
 		}
 
-		nanosleep(&half_sec, NULL);
+		nanosleep(&one_sec, NULL);
 	}
 
 	/* Unwaited children remain. */
 	return 1;
 }
 
+/* Print error, sleep for a few seconds, then exit. */
 void
-swap_state(int *cpid, enum states *state)
+sleep_err(int status, char *fmt, ...)
 {
-	if (*state == MULTIUSER) {
-		warnx("entering single-user mode");
-		*state = SINGLEUSER;
-		*cpid = fork_shell();
-	} else if (*state == SINGLEUSER) {
-		warnx("entering multi-user mode");
-		*state = MULTIUSER;
-		*cpid = fork_rc();
+	va_list ap;
+
+	fprintf(stderr, "\n");
+
+	va_start(ap, fmt);
+	vwarn(fmt, ap);
+	va_end(ap);
+
+	for (int i=0; i<6; i++) {
+		nanosleep(&one_sec, NULL);
 	}
+
+	exit(status);
 }
 
 void
@@ -186,4 +220,21 @@ start_timer()
 		{ 30, 0 }
 	};
 	timer_settime(tid, TIMER_ABSTIME, &its, NULL);
+}
+
+void
+swap_state(int *cpid, enum states *state)
+{
+	if (*state == MULTIUSER) {
+		warnx("entering single-user mode");
+		*state = SINGLEUSER;
+		*cpid = fork_shell();
+	} else if (*state == SINGLEUSER) {
+		warnx("entering multi-user mode");
+		*state = MULTIUSER;
+		*cpid = fork_rc();
+	}
+
+	if (*cpid == -1)
+		sleep_err(1, "fork(2) failed");
 }
