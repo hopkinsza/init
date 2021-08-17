@@ -36,6 +36,7 @@ enum states {
 
 int  fork_rc();
 int  fork_shell();
+int wait_for_upto(int);
 void swap_state(int *, enum states *);
 void start_timer();
 
@@ -50,18 +51,15 @@ sigset_t bmask;
 int
 main(int argc, char *argv[])
 {
-	int n;
 	int sig;
 	int status;
 	pid_t cpid;
 	pid_t pid;
 
-	if (DEBUG) {
-		if (getpid() != 1)
-			return 1;
-		if (getuid() != 0)
-			return 1;
-	}
+	if (getpid() != 1)
+		return 1;
+	if (getuid() != 0)
+		return 1;
 
 	sigfillset(&bmask);
 	sigprocmask(SIG_BLOCK, &bmask, NULL);
@@ -79,10 +77,12 @@ main(int argc, char *argv[])
 	switch (sig) {
 	case SIGALRM:
 	case SIGCHLD:
-		if (sig == SIGALRM)
-			debug("got alrm\n");
-		if (sig == SIGCHLD)
-			debug("got chld\n");
+		if (DEBUG) {
+			if (sig == SIGALRM)
+				debug("got alrm\n");
+			if (sig == SIGCHLD)
+				debug("got chld\n");
+		}
 
 		while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
 			if (pid == cpid) {
@@ -95,20 +95,20 @@ main(int argc, char *argv[])
 	case SIGTERM:
 		debug("got int or term\n");
 		if (state == MULTIUSER) {
-			debug("changing to singleuser\n");
-			for (n=0; n<20; n++) {
-				debug(".");
-				fflush(stdout);
-				if (!DEBUG) {
-					if (kill(-1, SIGTERM) == -1)
-						break;
+			warnx("waiting up to 15 seconds for processes to exit...");
+
+			kill(-1, SIGTERM);
+			kill(-1, SIGHUP);
+			kill(-1, SIGCONT);
+
+			if (wait_for_upto(20) != 0) {
+				kill(-1, SIGKILL);
+				if (wait_for_upto(10) != 0) {
+					warnx("some processes would not die; "
+					      "ps axl advised");
 				}
-				nanosleep(&half_sec, NULL);
 			}
-			if (n == 20) {
-				debug("\n");
-				warnx("some processes would not die; ps axl advised");
-			}
+
 			swap_state(&cpid, &state);
 		}
 		break;
@@ -137,15 +137,37 @@ fork_shell()
 	return pid;
 }
 
+int
+wait_for_upto(int halfsecs)
+{
+	int pid;
+	int status;
+
+	for (int i=0; i<halfsecs; i++) {
+		while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+			;
+
+		if (pid == -1) {
+			/* All children successfully waited for. */
+			return 0;
+		}
+
+		nanosleep(&half_sec, NULL);
+	}
+
+	/* Unwaited children remain. */
+	return 1;
+}
+
 void
 swap_state(int *cpid, enum states *state)
 {
 	if (*state == MULTIUSER) {
-		debug("starting singleuser\n");
+		warnx("entering single-user mode");
 		*state = SINGLEUSER;
 		*cpid = fork_shell();
 	} else if (*state == SINGLEUSER) {
-		debug("starting multiuser\n");
+		warnx("entering multi-user mode");
 		*state = MULTIUSER;
 		*cpid = fork_rc();
 	}
