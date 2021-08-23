@@ -123,23 +123,21 @@ main(int argc, char *argv[])
 	case SIGINT:
 	case SIGTERM:
 		debug("got int or term\n");
-		if (state == MULTIUSER) {
-			warnx("waiting up to 15 seconds for processes to exit...");
+		if (state != MULTIUSER)
+			break;
 
-			kill(-1, SIGTERM);
-			kill(-1, SIGHUP);
-			kill(-1, SIGCONT);
-
-			if (wait_for_upto(10) != 0) {
-				kill(-1, SIGKILL);
-				if (wait_for_upto(5) != 0) {
-					warnx("some processes would not die; "
-					      "ps axl advised");
-				}
+		warnx("waiting up to 15 seconds for processes to exit...");
+		kill(-1, SIGTERM);
+		kill(-1, SIGHUP);
+		kill(-1, SIGCONT);
+		if (wait_for_upto(10) != 0) {
+			kill(-1, SIGKILL);
+			if (wait_for_upto(5) != 0) {
+				warnx("some processes would not die; ps axl advised");
 			}
-
-			swap_state(&cpid, &state);
 		}
+		swap_state(&cpid, &state);
+
 		break;
 	}
 }
