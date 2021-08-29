@@ -1,4 +1,6 @@
 /*
+ * SPDX-License-Identifier: 0BSD
+ *
  * We are always in one of two states: SINGLEUSER or MULTIUSER.
  *   SINGLEUSER -> an emergency shell /bin/sh is running.
  *   MULTIUSER  -> /etc/rc is running. This is the default unless

@@ -1,4 +1,6 @@
-# Makefile
+#
+# SPDX-License-Identifier: 0BSD
+#
 
 PROG = init
 SRCS = debug.c init.c
