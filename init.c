@@ -8,6 +8,9 @@
  * Either way, we keep track of the PID of that process in `cpid'.
  *
  * If the `cpid' process exits, switch state to the opposite mode.
+ * The exception to this is if it has been terminated by SIGTERM or SIGHUP.
+ * In this case, assume that this was done by halt/poweroff/reboot and don't
+ * do anything.
  *
  * Only respond to the following signals:
  *   SIGALRM || SIGCHLD -> wait() on any children. A SIGALRM is scheduled to be
@@ -117,27 +120,37 @@ main(int argc, char *argv[])
 
 		while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
 			if (pid == cpid) {
-				debug("cpid exited, running swap_state()\n");
-				swap_state(&cpid, &state);
+				/*
+				 * Most programs should behave as expected with
+				 * the W* macros described in wait(2).
+				 */
+				if (WIFSIGNALED(status) &&
+				    (WTERMSIG(status) == SIGTERM ||
+				     WTERMSIG(status) == SIGHUP)) {
+					debug("cpid terminated by TERM or HUP\n");
+					cpid = 0;
+				}
+				/*
+				 * But some programs exit with 128+signumber.
+				 */
+				else if (WIFEXITED(status) &&
+				         (WEXITSTATUS(status) == 129 ||
+					  WEXITSTATUS(status) == 143)) {
+					debug("cpid exited with status 129 or 143");
+					cpid = 0;
+				} else {
+					debug("cpid exited, running swap_state()\n");
+					swap_state(&cpid, &state);
+				}
 			}
 		}
 		break;
 	case SIGINT:
 	case SIGTERM:
 		debug("got int or term\n");
-		if (state != MULTIUSER)
+		if (state == SINGLEUSER)
 			break;
 
-		warnx("waiting up to 15 seconds for processes to exit...");
-		kill(-1, SIGTERM);
-		kill(-1, SIGHUP);
-		kill(-1, SIGCONT);
-		if (wait_for_upto(10) != 0) {
-			kill(-1, SIGKILL);
-			if (wait_for_upto(5) != 0) {
-				warnx("some processes would not die; ps axl advised");
-			}
-		}
 		swap_state(&cpid, &state);
 
 		break;
@@ -227,6 +240,16 @@ swap_state(int *cpid, enum states *state)
 {
 	if (*state == MULTIUSER) {
 		warnx("entering single-user mode");
+		warnx("waiting up to 15 seconds for processes to exit...");
+		kill(-1, SIGTERM);
+		kill(-1, SIGHUP);
+		kill(-1, SIGCONT);
+		if (wait_for_upto(10) != 0) {
+			kill(-1, SIGKILL);
+			if (wait_for_upto(5) != 0) {
+				warnx("some processes would not die; ps axl advised");
+			}
+		}
 		*state = SINGLEUSER;
 		*cpid = fork_shell();
 	} else if (*state == SINGLEUSER) {
