@@ -10,20 +10,17 @@ CFLAGS = -Wall
 CPPFLAGS =
 # Uncomment for debugging output:
 #CPPFLAGS += -DDEBUG
-LDFLAGS = -lrt
+LDLIBS = -lrt -lpthread
 
-
-.PHONY: all clean
-
-$(PROG):
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(OBJS) -o $@
-
-all: $(PROG)
 
 $(PROG): $(OBJS)
+
+all: $(PROG)
 
 $(OBJS): debug.h
 
 clean:
 	@rm -f $(PROG) *.o
 	@echo cleaned
+
+.PHONY: all clean
